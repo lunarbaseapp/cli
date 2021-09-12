@@ -1,7 +1,7 @@
 {
   "name": "@lunarbase/cli",
   "description": "Official Lunarbase CLI",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "author": "nebulatgs",
   "bin": {
     "lunar": "./bin/run"
@@ -12,16 +12,17 @@
     "@oclif/config": "^1",
     "@oclif/plugin-help": "^3",
     "axios": "^0.21.4",
+    "cli-ux": "^5.6.3",
+    "form-data": "^4.0.0",
     "glob": "^7.1.7",
     "ignore": "^5.1.8",
-    "tar": "^6.1.11",
+    "tar-pack": "^3.4.1",
     "tslib": "^1",
     "uuid": "^8.3.2"
   },
   "devDependencies": {
     "@oclif/dev-cli": "^1",
     "@types/node": "^10",
-    "@types/tar": "^4.0.5",
     "@types/uuid": "^8.3.1",
     "eslint": "^5.13",
     "eslint-config-oclif": "^3.1",

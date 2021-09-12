@@ -1,25 +1,23 @@
 import { Command, flags } from "@oclif/command";
 import {
-  createReadStream,
   existsSync,
   mkdirSync,
   readFileSync,
 } from "fs";
-import * as tar from "tar";
-import { v4 } from "uuid";
-import ignore from "ignore";
-import { resolve } from "path";
-import { promises as fs } from "fs";
 
-const ignoreFile = existsSync(".lunarignore")
-  ? readFileSync(".lunarignore").toString()
-  : existsSync(".gitignore")
-  ? readFileSync(".gitignore").toString()
-  : "";
-const ig = ignore().add(ignoreFile.split(/\n/g));
+import { promises } from "fs";
+/// @ts-ignore
+import { pack } from "tar-pack";
+import cli from "cli-ux";
+import FormData from "form-data";
+import axios from "axios";
 
-function filterFiles(paths: string[]) {
-  return ig.filter(paths);
+interface LunarConfig {
+  name: string;
+  replicas: number;
+  port: number;
+  subdomain: string;
+  connectedDeploy?: string;
 }
 
 export default class Deploy extends Command {
@@ -44,43 +42,72 @@ export default class Deploy extends Command {
 
   async run() {
     const { args, flags } = this.parse(Deploy);
-    const Dockerfile = readFileSync(flags.file ?? "Dockerfile").toString();
-    if (!existsSync(".lunar")) {
-      mkdirSync(".lunar");
+    if (!existsSync('.lunarconfig.json')) {
+      this.error('.lunarconfig.json not found. (Hint: run \'lunar init\' to create one for you)');
     }
-    this.log(Dockerfile);
-    let paths: string[] = [];
-    (async () => {
-      for await (const f of getFiles(args.context)) {
-        paths.push(f);
+    const Dockerfile = (await promises.readFile(flags.file ?? "Dockerfile")).toString();
+    const lunarConfig: LunarConfig = JSON.parse(
+      (await promises.readFile(".lunarconfig.json")).toString(),
+    );
+    // if (!existsSync(".lunar")) {
+    //   await promises.mkdir(".lunar");
+    // }
+    const gzip = pack(args.context, {
+      ignoreFiles: [".gitignore", ".lunarignore"],
+      fromBase: true,
+    });
+    const form = new FormData();
+    form.append("buildContext", gzip);
+    form.append("user", "testuser");
+    cli.action.start("Uploading build context");
+    const uploadRes = await axios.post(
+      "https://cs-0.dev.offline.codes/proxy/3000/uploadContext",
+      form,
+      {
+        headers: form.getHeaders(),
+      },
+    );
+    cli.action.stop();
+    if (!uploadRes.data.error) {
+      cli.action.start("Initializing builder");
+      const createRes = await axios.post(
+        "https://cs-0.dev.offline.codes/proxy/3000/createBuilder",
+        { ...uploadRes.data, user: "testuser" },
+      );
+      cli.action.stop();
+      if (!createRes.data.error) {
+        cli.action.start("Building image");
+        const buildRes = await axios.post(
+          "https://cs-0.dev.offline.codes/proxy/3000/buildImage",
+          {
+            ...uploadRes.data,
+            ...createRes.data,
+            user: "testuser",
+          },
+        );
+        cli.action.stop();
+        if (!buildRes.data.error) {
+          cli.action.start("Deploying image");
+          const connected = await axios.post(
+            "https://cs-0.dev.offline.codes/proxy/3000/deployWeb",
+            {
+              ...lunarConfig,
+              user: "testuser",
+              image:
+                `lunarbasedev.azurecr.io/${createRes.data.imageName}:latest`,
+            },
+          );
+          cli.action.stop();
+          console.log(
+            `Successfuly deployed ${lunarConfig.name} to https://${lunarConfig.subdomain}.lunarbase.app`,
+          );
+          promises.writeFile('.lunarconfig.json', JSON.stringify({...lunarConfig, connectedDeploy: connected.data}))
+        } else {
+          cli.action.stop("failed");
+          console.log("Build logs are shown below");
+          console.log(buildRes.data.error);
+        }
       }
-    })();
-    paths = filterFiles(paths);
-    const tarStream = tar.Pack();
-    for (const path in paths) {
-      tarStream.add(createReadStream(path));
-    }
-    console.log(tarStream.read().toString());
-    // await tar.create(
-    //   { file: `.lunar/${v4()}.tar.gz` },
-    //   [args.context],
-    // );
-    // const packStream = tar.Pack();
-    // packStream.
-    // const form = new FormData();
-    // form.append()
-  }
-}
-
-
-async function* getFiles(dir: string) {
-  const dirents = await fs.readdir(dir, { withFileTypes: true });
-  for (const dirent of dirents) {
-    const res = resolve(dir, dirent.name);
-    if (dirent.isDirectory()) {
-      yield* getFiles(res);
-    } else {
-      yield res;
     }
   }
 }
